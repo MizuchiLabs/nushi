@@ -166,13 +166,13 @@ doesn't trust that name, so `Require` answers 401. Set `r.Host = "localhost"`.
 
 | Route                            | What it does                                              |
 | -------------------------------- | --------------------------------------------------------- |
-| `GET /api/session`               | `{"mode":"oidc","signedIn":true,"apiToken":true}`         |
+| `GET /api/session`               | `{"mode":"oidc","signed_in":true,"api_token":true}`         |
 | `POST /api/session`              | password mode, body `{"password":"..."}`, sets the cookie |
 | `DELETE /api/session`            | signs out                                                 |
 | `GET /api/session/oidc`          | oidc mode, send the browser here to sign in               |
 | `GET /api/session/oidc/callback` | the provider sends the browser back here                  |
 
-`apiToken` is only told to a signed in browser. Errors are
+`api_token` is only told to a signed in browser. Errors are
 `application/problem+json` with a `detail`.
 
 ## Frontend
@@ -183,7 +183,7 @@ show.
 ```js
 const session = await (await fetch("/api/session")).json();
 
-if (session.signedIn) {
+if (session.signed_in) {
   showApp();
 } else if (session.mode === "password") {
   showPasswordForm();

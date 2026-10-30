@@ -388,6 +388,18 @@ func TestModeNoneLetsEveryoneIn(t *testing.T) {
 	assert.False(t, s.APIToken, "the token means nothing without a sign in")
 }
 
+func TestSessionJSON(t *testing.T) {
+	t.Parallel()
+	g := newGuard(t, Config{Password: testPassword, APITokens: []string{testToken}})
+	r := httptest.NewRequest(http.MethodGet, sessionPath, nil)
+	assert.JSONEq(t, `{"mode": "password", "signed_in": false}`, do(g.mux, r).Body.String(),
+		"only a signed in browser learns about the token")
+
+	r = httptest.NewRequest(http.MethodGet, sessionPath, nil)
+	r.AddCookie(&http.Cookie{Name: "app_session", Value: g.sign(time.Now().Add(time.Hour).Unix())})
+	assert.JSONEq(t, `{"mode": "password", "signed_in": true, "api_token": true}`, do(g.mux, r).Body.String())
+}
+
 func TestRequire(t *testing.T) {
 	t.Parallel()
 	g := newGuard(t, Config{Password: testPassword})

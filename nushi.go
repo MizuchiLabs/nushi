@@ -106,8 +106,8 @@ type Guard struct {
 
 type session struct {
 	Mode     Mode `json:"mode"`
-	SignedIn bool `json:"signedIn"`
-	APIToken bool `json:"apiToken,omitzero"`
+	SignedIn bool `json:"signed_in"`
+	APIToken bool `json:"api_token,omitzero"`
 }
 
 type problem struct {
