@@ -1,8 +1,7 @@
 # nushi
 
-Sign in for small apps that have one owner instead of users. Password, OIDC
-(PocketID or any provider that sends a `groups` claim), or nothing on loopback. Plus API
-tokens for scripts. No database, no user table.
+Sign in for small apps that have one owner instead of users. Password, OIDC, or
+nothing on loopback. Plus API tokens for scripts. No database, no user table.
 
 ```
 go get github.com/mizuchilabs/nushi
@@ -14,7 +13,7 @@ go get github.com/mizuchilabs/nushi
 | ---------- | ------------------------------------------ | ------------- | -------- |
 | `none`     | this machine, local host names only        | loopback only |          |
 | `password` | whoever knows the password                 | anywhere      | 30 days  |
-| `oidc`     | members of one group at your OIDC provider | anywhere      | 24 hours |
+| `oidc`     | whoever your OIDC provider lets through    | anywhere      | 24 hours |
 
 The mode comes from `<APP>_AUTH`. Left empty, it follows what is set: a
 password means `password`, an issuer means `oidc`, neither means `none`.
@@ -43,7 +42,7 @@ The env vars carry the app's prefix, `MYAPP_` for an app called `myapp`.
 | `<APP>_OIDC_ISSUER`        | `oidc`     | `https://id.example.com`                                                |
 | `<APP>_OIDC_CLIENT_ID`     | `oidc`     |                                                                         |
 | `<APP>_OIDC_CLIENT_SECRET` | `oidc`     | at least 16 characters, it also keys the cookie                         |
-| `<APP>_OIDC_GROUP`         | `oidc`     | only this group gets in, from the ID token's `groups` claim or userinfo |
+| `<APP>_OIDC_GROUP`         | `oidc`     | optional, only this group gets in, see [Who gets in](#who-gets-in)      |
 | `<APP>_PUBLIC_URL`         | `oidc`     | the site root where browsers reach the app, no path                     |
 | `<APP>_TRUSTED_PROXIES`    | not `none` | proxy IPs or ranges, see [Behind a proxy](#behind-a-proxy)              |
 | `<APP>_TRUSTED_HOSTS`      | `none`     | extra host names or IP ranges the app answers to, no ports              |
@@ -77,7 +76,8 @@ proxy moved, the app logs that once too.
 
 1. Add an OIDC client in PocketID with the callback URL
    `<PUBLIC_URL>/api/session/oidc/callback`.
-2. Make a group for the people who may use the app and add yourself.
+2. On the client's Access tab, pick the groups that may sign in. A new client
+   lets nobody in.
 3. Set the env vars:
 
 ```yaml
@@ -85,7 +85,6 @@ environment:
   MYAPP_OIDC_ISSUER: https://id.example.com
   MYAPP_OIDC_CLIENT_ID: 7f3c...
   MYAPP_OIDC_CLIENT_SECRET: ${MYAPP_OIDC_CLIENT_SECRET}
-  MYAPP_OIDC_GROUP: admins
   MYAPP_PUBLIC_URL: https://myapp.example.com
 ```
 
@@ -95,6 +94,23 @@ token names it. In Docker, put the app on Traefik's network so
 signs you in itself.
 
 A new client secret ends every session, the same as a new password.
+
+## Who gets in
+
+Everyone your provider lets through gets the whole app, nushi has no users to
+tell apart. So limit the client at the provider. Most can do that, for example
+bindings in Authentik or the project's role check in Zitadel.
+
+Where that isn't simple, as in Keycloak or on a public provider, set
+`<APP>_OIDC_GROUP` too. nushi then asks for the `groups` scope and only lets in
+that group, from the ID token's `groups` claim or userinfo.
+
+- PocketID, Authentik, Authelia and Dex send the claim as is.
+- Keycloak needs a `groups` client scope with a group membership mapper, it
+  refuses the sign in without one.
+- Kanidm needs `groups` in the scope map, and takes the group as UUID or SPN.
+- Zitadel has roles, not groups. It only sends the claim from an Action you
+  write.
 
 ## Use
 
@@ -225,7 +241,7 @@ async function signOut() {
   brought in from outside the local network, and unknown host names, which also
   stops DNS rebinding.
 - OIDC: state, nonce and PKCE on every sign in, the ID token is checked for
-  issuer, audience, expiry and group.
+  issuer, audience and expiry, and for the group if you set one.
 
 ## What it doesn't do
 

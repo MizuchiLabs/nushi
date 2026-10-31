@@ -71,7 +71,8 @@ type Config struct {
 	OIDCIssuer       string
 	OIDCClientID     string
 	OIDCClientSecret string
-	// OIDCGroup is the group from the groups claim that may sign in.
+	// OIDCGroup is the group from the groups claim that may sign in. Empty
+	// skips the check, everyone the provider lets through gets in.
 	OIDCGroup string
 	// PublicURL is the site root where browsers reach the app, the provider redirects back to it.
 	PublicURL string
@@ -252,7 +253,6 @@ func (g *Guard) pickMode(c Config) (Mode, error) {
 		need(c.OIDCIssuer, "OIDC_ISSUER")
 		need(c.OIDCClientID, "OIDC_CLIENT_ID")
 		need(c.OIDCClientSecret, "OIDC_CLIENT_SECRET")
-		need(c.OIDCGroup, "OIDC_GROUP")
 		need(c.PublicURL, "PUBLIC_URL")
 	default:
 		return "", fmt.Errorf("%s is %q, it has to be none, password or oidc", g.env("AUTH"), mode)

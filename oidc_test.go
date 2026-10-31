@@ -324,6 +324,32 @@ func TestOIDCGroupsFromUserinfo(t *testing.T) {
 	}
 }
 
+func TestOIDCWithoutGroup(t *testing.T) {
+	t.Parallel()
+	for name, groups := range map[string]any{
+		"no groups claim": nil,
+		"other groups":    []string{"family"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			idp := newProvider(t)
+			idp.claims = map[string]any{"groups": groups}
+			g := newGuard(t, Config{
+				OIDCIssuer:       idp.srv.URL,
+				OIDCClientID:     testClientID,
+				OIDCClientSecret: "0123456789abcdef0123456789abcdef",
+				PublicURL:        "http://app.example.com/",
+			})
+			q, flow := start(t, g, idp)
+			assert.NotContains(t, q.Get("scope"), "groups", "Keycloak refuses a scope it doesn't know")
+
+			w := callback(g, "code="+testCode+"&state="+q.Get("state"), flow)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.True(t, readSession(t, g, findCookie(w, "app_session")).SignedIn)
+		})
+	}
+}
+
 func TestOIDCProviderComesUpLater(t *testing.T) {
 	t.Parallel()
 	idp := newProvider(t)

@@ -36,6 +36,13 @@ type oidcClient struct {
 }
 
 func newOIDC(c Config) *oidcClient {
+	scopes := []string{oidc.ScopeOpenID, oidc.ScopeProfile}
+	// Only when needed, Keycloak refuses a sign in that asks for a scope it doesn't know.
+	if c.OIDCGroup != "" {
+		scopes = append(scopes, "groups")
+	} else {
+		slog.Info("no oidc group set, the provider decides who gets in")
+	}
 	return &oidcClient{
 		issuer: c.OIDCIssuer,
 		group:  c.OIDCGroup,
@@ -44,7 +51,7 @@ func newOIDC(c Config) *oidcClient {
 			ClientID:     c.OIDCClientID,
 			ClientSecret: c.OIDCClientSecret,
 			RedirectURL:  strings.TrimSuffix(c.PublicURL, "/") + callbackPath,
-			Scopes:       []string{oidc.ScopeOpenID, oidc.ScopeProfile, "groups"},
+			Scopes:       scopes,
 		},
 	}
 }
@@ -122,6 +129,18 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, "the ID token belongs to another sign in", nil)
 		return
 	}
+	if g.oidc.group != "" && !g.oidc.inGroup(ctx, p, tok, idt) {
+		slog.Warn("oidc sign in refused, not in the group", "sub", idt.Subject, "group", g.oidc.group)
+		fail(w, http.StatusForbidden, "this account is not in the group "+g.oidc.group, nil)
+		return
+	}
+
+	g.startSession(w, r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(continuePage))
+}
+
+func (o *oidcClient) inGroup(ctx context.Context, p *oidc.Provider, tok *oauth2.Token, idt *oidc.IDToken) bool {
 	var claims struct {
 		Groups []string `json:"groups"`
 	}
@@ -134,15 +153,7 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 			_ = info.Claims(&claims)
 		}
 	}
-	if !slices.Contains(claims.Groups, g.oidc.group) {
-		slog.Warn("oidc sign in refused, not in the group", "sub", idt.Subject, "group", g.oidc.group)
-		fail(w, http.StatusForbidden, "this account is not in the group "+g.oidc.group, nil)
-		return
-	}
-
-	g.startSession(w, r)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(continuePage))
+	return slices.Contains(claims.Groups, o.group)
 }
 
 // flowCookie holds state, nonce and PKCE verifier while the browser is at
