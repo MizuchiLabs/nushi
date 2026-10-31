@@ -122,10 +122,16 @@ func oidcGuard(t *testing.T, idp *fakeProvider) *Guard {
 	})
 }
 
+func startRequest() *http.Request {
+	r := httptest.NewRequest(http.MethodGet, sessionPath+"/oidc", nil)
+	r.Host = "app.example.com"
+	return r
+}
+
 // start begins a sign in and hands back the provider's query and the flow cookie.
 func start(t *testing.T, g *Guard, idp *fakeProvider) (url.Values, *http.Cookie) {
 	t.Helper()
-	w := do(g.mux, httptest.NewRequest(http.MethodGet, sessionPath+"/oidc", nil))
+	w := do(g.mux, startRequest())
 	require.Equal(t, http.StatusFound, w.Code, w.Body.String())
 	loc, err := url.Parse(w.Header().Get("Location"))
 	require.NoError(t, err)
@@ -180,6 +186,31 @@ func TestOIDCSignIn(t *testing.T) {
 	require.NotNil(t, session)
 	assert.Equal(t, int(oidcTTL.Seconds()), session.MaxAge)
 	assert.True(t, readSession(t, g, session).SignedIn)
+}
+
+func TestOIDCStartMovesToPublicHost(t *testing.T) {
+	t.Parallel()
+	idp := newProvider(t)
+	g := oidcGuard(t, idp)
+	get := func(host, query string) *httptest.ResponseRecorder {
+		r := startRequest()
+		r.Host, r.URL.RawQuery = host, query
+		return do(g.mux, r)
+	}
+
+	w := get("127.0.0.1:3000", "")
+	assert.Equal(t, http.StatusFound, w.Code)
+	assert.Equal(t, "http://app.example.com"+sessionPath+"/oidc?moved=1", w.Header().Get("Location"))
+	assert.Nil(t, findCookie(w, "app_oidc"), "a flow cookie on this host would never come back")
+
+	for _, host := range []string{"app.example.com", "app.example.com:8080", "APP.example.com"} {
+		w = get(host, "")
+		assert.Contains(t, w.Header().Get("Location"), idp.srv.URL, host)
+		assert.NotNil(t, findCookie(w, "app_oidc"), host)
+	}
+
+	w = get("internal:3000", "moved=1")
+	assert.Contains(t, w.Header().Get("Location"), idp.srv.URL, "a proxy that rewrites Host must not loop")
 }
 
 func TestOIDCThroughProtect(t *testing.T) {
@@ -356,7 +387,7 @@ func TestOIDCProviderComesUpLater(t *testing.T) {
 	idp.down.Store(true)
 	g := oidcGuard(t, idp)
 
-	w := do(g.mux, httptest.NewRequest(http.MethodGet, sessionPath+"/oidc", nil))
+	w := do(g.mux, startRequest())
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 
 	idp.down.Store(false)
@@ -370,7 +401,7 @@ func TestOIDCIssuerMismatch(t *testing.T) {
 		OIDCIssuer: idp.srv.URL + "/", OIDCClientID: testClientID, OIDCClientSecret: "0123456789abcdef",
 		OIDCGroup: "admins", PublicURL: "http://app.example.com",
 	})
-	w := do(g.mux, httptest.NewRequest(http.MethodGet, sessionPath+"/oidc", nil))
+	w := do(g.mux, startRequest())
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 	assert.Contains(t, w.Body.String(), "set up wrong", "the provider answered, so it isn't only about reaching it")
 }
@@ -396,7 +427,7 @@ func TestOIDCDiscoveryDoesNotQueue(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range signIns {
-		wg.Go(func() { do(g.mux, httptest.NewRequest(http.MethodGet, sessionPath+"/oidc", nil)) })
+		wg.Go(func() { do(g.mux, startRequest()) })
 	}
 	wg.Wait()
 	select {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -29,6 +30,7 @@ const continuePage = `<!doctype html><meta http-equiv="refresh" content="0;url=/
 
 type oidcClient struct {
 	issuer   string
+	public   *url.URL
 	conf     oauth2.Config
 	group    string
 	client   *http.Client
@@ -41,16 +43,18 @@ func newOIDC(c Config) *oidcClient {
 	if c.OIDCGroup != "" {
 		scopes = append(scopes, "groups")
 	} else {
-		slog.Info("no oidc group set, the provider decides who gets in")
+		slog.Debug("no oidc group set, the provider decides who gets in")
 	}
+	public, _ := url.Parse(strings.TrimSuffix(c.PublicURL, "/")) // pickMode checked it
 	return &oidcClient{
 		issuer: c.OIDCIssuer,
+		public: public,
 		group:  c.OIDCGroup,
 		client: &http.Client{Timeout: 10 * time.Second},
 		conf: oauth2.Config{
 			ClientID:     c.OIDCClientID,
 			ClientSecret: c.OIDCClientSecret,
-			RedirectURL:  strings.TrimSuffix(c.PublicURL, "/") + callbackPath,
+			RedirectURL:  public.String() + callbackPath,
 			Scopes:       scopes,
 		},
 	}
@@ -76,6 +80,12 @@ func (o *oidcClient) ready(ctx context.Context) (*oidc.Provider, oauth2.Config, 
 }
 
 func (g *Guard) oidcStart(w http.ResponseWriter, r *http.Request) {
+	// The provider comes back to the public URL, so the flow cookie has to sit on
+	// that host. Only once, a proxy that rewrites Host would land here forever.
+	if bareHost(r.Host) != bareHost(g.oidc.public.Host) && !r.URL.Query().Has("moved") {
+		http.Redirect(w, r, g.oidc.public.String()+sessionPath+"/oidc?moved=1", http.StatusFound)
+		return
+	}
 	_, conf, err := g.oidc.ready(r.Context())
 	if err != nil {
 		fail(w, http.StatusBadGateway, "the sign in provider is not reachable or set up wrong, see the app's log", err)

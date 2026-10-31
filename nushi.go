@@ -468,14 +468,19 @@ func (g *Guard) bearer(header string) bool {
 }
 
 func (g *Guard) trusted(host string) bool {
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.ToLower(strings.Trim(host, "[]"))
+	host = bareHost(host)
 	if a, err := netip.ParseAddr(host); err == nil {
 		return inRanges(g.hostRanges, a.Unmap())
 	}
 	return g.hostNames[host]
+}
+
+// bareHost cuts the port and brackets off a Host value and lowers it.
+func bareHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.ToLower(strings.Trim(host, "[]"))
 }
 
 // env names the app's env var for key, such as MYAPP_PASSWORD.

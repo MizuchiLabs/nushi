@@ -93,6 +93,9 @@ token names it. In Docker, put the app on Traefik's network so
 `id.example.com` resolves. Don't put forward auth in front of the app, it
 signs you in itself.
 
+A sign in that starts on another host, such as `127.0.0.1` with a public URL on
+`localhost`, moves to the public URL first and stays there.
+
 A new client secret ends every session, the same as a new password.
 
 ## Who gets in
