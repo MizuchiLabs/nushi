@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -180,6 +182,39 @@ func TestFromEnvOIDC(t *testing.T) {
 	assert.Equal(t, "0123456789abcdef", g.oidc.conf.ClientSecret)
 	assert.Equal(t, "admins", g.oidc.group)
 	assert.Equal(t, "https://app.example.com"+callbackPath, g.oidc.conf.RedirectURL)
+}
+
+func TestFromEnvSecretFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		return path
+	}
+	t.Setenv("APP_PASSWORD_FILE", write("password", testPassword+"\n"))
+	t.Setenv("APP_API_TOKEN_FILE", write("token", testToken+","+testToken2+"\r\n"))
+	g, err := FromEnv("app")
+	require.NoError(t, err)
+	assert.Equal(t, ModePassword, g.Mode())
+	assert.Equal(
+		t,
+		http.StatusNoContent,
+		do(g.mux, signInRequest(testPassword)).Code,
+		"the newline is not the password",
+	)
+	assert.True(t, g.bearer("Bearer "+testToken))
+	assert.True(t, g.bearer("Bearer "+testToken2))
+
+	t.Setenv("APP_PASSWORD", testPassword)
+	_, err = FromEnv("app")
+	require.ErrorContains(t, err, "both APP_PASSWORD and APP_PASSWORD_FILE are set")
+}
+
+func TestFromEnvSecretFileMissing(t *testing.T) {
+	t.Setenv("APP_OIDC_CLIENT_SECRET_FILE", filepath.Join(t.TempDir(), "gone"))
+	_, err := FromEnv("app")
+	require.ErrorContains(t, err, "reading APP_OIDC_CLIENT_SECRET_FILE")
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestFromEnvAuthPicksTheMode(t *testing.T) {

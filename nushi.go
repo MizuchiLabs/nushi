@@ -15,6 +15,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -118,23 +119,45 @@ type problem struct {
 }
 
 // FromEnv builds the guard for the app called name from its env vars, which
-// carry the name as a prefix, such as MYAPP_PASSWORD for myapp.
+// carry the name as a prefix, such as MYAPP_PASSWORD for myapp. The password,
+// the API token and the client secret may sit in a file instead, such as a
+// docker secret, named by the same var with _FILE at its end.
 func FromEnv(name string) (*Guard, error) {
 	prefix := strings.ToUpper(name) + "_"
 	get := func(key string) string { return os.Getenv(prefix + key) }
-	list := func(key string) []string { return strings.Split(get(key), ",") }
-	return New(name, Config{
+	list := func(value string) []string { return strings.Split(value, ",") }
+	var fileErr error
+	secret := func(key string) string {
+		path := get(key + "_FILE")
+		if path == "" {
+			return get(key)
+		}
+		if get(key) != "" {
+			fileErr = errors.Join(fileErr, fmt.Errorf("both %s and %s_FILE are set, pick one", prefix+key, prefix+key))
+			return ""
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			fileErr = errors.Join(fileErr, fmt.Errorf("reading %s_FILE: %w", prefix+key, err))
+		}
+		return strings.TrimRight(string(b), "\r\n")
+	}
+	c := Config{
 		Mode:             Mode(get("AUTH")),
-		Password:         get("PASSWORD"),
-		APITokens:        list("API_TOKEN"),
+		Password:         secret("PASSWORD"),
+		APITokens:        list(secret("API_TOKEN")),
 		OIDCIssuer:       get("OIDC_ISSUER"),
 		OIDCClientID:     get("OIDC_CLIENT_ID"),
-		OIDCClientSecret: get("OIDC_CLIENT_SECRET"),
+		OIDCClientSecret: secret("OIDC_CLIENT_SECRET"),
 		OIDCGroup:        get("OIDC_GROUP"),
 		PublicURL:        get("PUBLIC_URL"),
-		TrustedProxies:   list("TRUSTED_PROXIES"),
-		TrustedHosts:     list("TRUSTED_HOSTS"),
-	})
+		TrustedProxies:   list(get("TRUSTED_PROXIES")),
+		TrustedHosts:     list(get("TRUSTED_HOSTS")),
+	}
+	if fileErr != nil {
+		return nil, fileErr
+	}
+	return New(name, c)
 }
 
 // New builds the guard for the app called name, which names the cookies and

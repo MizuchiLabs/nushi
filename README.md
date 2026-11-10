@@ -47,6 +47,10 @@ The env vars carry the app's prefix, `MYAPP_` for an app called `myapp`.
 | `<APP>_TRUSTED_PROXIES`    | not `none` | proxy IPs or ranges, see [Behind a proxy](#behind-a-proxy)              |
 | `<APP>_TRUSTED_HOSTS`      | `none`     | extra host names or IP ranges the app answers to, no ports              |
 
+The password, the API token and the client secret can sit in a file instead,
+such as a docker secret. Add `_FILE` to the var and give it the path, as in
+`<APP>_PASSWORD_FILE=/run/secrets/myapp_password`. Setting both is an error.
+
 ## Behind a proxy
 
 Traefik on a docker network works without any setup. nushi trusts
