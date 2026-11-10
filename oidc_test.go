@@ -131,7 +131,12 @@ func startRequest() *http.Request {
 // start begins a sign in and hands back the provider's query and the flow cookie.
 func start(t *testing.T, g *Guard, idp *fakeProvider) (url.Values, *http.Cookie) {
 	t.Helper()
-	w := do(g.mux, startRequest())
+	return startWith(t, g, idp, startRequest())
+}
+
+func startWith(t *testing.T, g *Guard, idp *fakeProvider, r *http.Request) (url.Values, *http.Cookie) {
+	t.Helper()
+	w := do(g.mux, r)
 	require.Equal(t, http.StatusFound, w.Code, w.Body.String())
 	loc, err := url.Parse(w.Header().Get("Location"))
 	require.NoError(t, err)
@@ -179,7 +184,7 @@ func TestOIDCSignIn(t *testing.T) {
 
 	w := callback(g, "code="+testCode+"&state="+q.Get("state"), flow)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.Contains(t, w.Body.String(), `http-equiv="refresh"`)
+	assert.Contains(t, w.Body.String(), `http-equiv="refresh" content="0;url=/"`)
 
 	assert.Equal(t, -1, findCookie(w, "app_oidc").MaxAge, "the flow cookie is spent")
 	session := findCookie(w, "app_session")
@@ -200,7 +205,7 @@ func TestOIDCStartMovesToPublicHost(t *testing.T) {
 
 	w := get("127.0.0.1:3000", "")
 	assert.Equal(t, http.StatusFound, w.Code)
-	assert.Equal(t, "http://app.example.com"+sessionPath+"/oidc?moved=1", w.Header().Get("Location"))
+	assert.Equal(t, "http://app.example.com"+sessionPath+"/oidc?moved=1&next=%2F", w.Header().Get("Location"))
 	assert.Nil(t, findCookie(w, "app_oidc"), "a flow cookie on this host would never come back")
 
 	for _, host := range []string{"app.example.com", "app.example.com:8080", "APP.example.com"} {
@@ -209,8 +214,50 @@ func TestOIDCStartMovesToPublicHost(t *testing.T) {
 		assert.NotNil(t, findCookie(w, "app_oidc"), host)
 	}
 
+	w = get("127.0.0.1:3000", "next=%2Fthings%2F42")
+	assert.Contains(t, w.Header().Get("Location"), "next=%2Fthings%2F42", "the move keeps where to land")
+
 	w = get("internal:3000", "moved=1")
 	assert.Contains(t, w.Header().Get("Location"), idp.srv.URL, "a proxy that rewrites Host must not loop")
+}
+
+func TestOIDCNext(t *testing.T) {
+	t.Parallel()
+	idp := newProvider(t)
+	g := oidcGuard(t, idp)
+	r := startRequest()
+	r.URL.RawQuery = url.Values{"next": {`/things/42?tab="a"&x=1#top`}}.Encode()
+	q, flow := startWith(t, g, idp, r)
+
+	w := callback(g, "code="+testCode+"&state="+q.Get("state"), flow)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `href="/things/42?tab=&#34;a&#34;&amp;x=1#top"`)
+
+	q, flow = start(t, g, idp)
+	head, _, _ := strings.CutLast(flow.Value, ".")
+	flow.Value = head + "." + url.QueryEscape("//evil.example.com")
+	w = callback(g, "code="+testCode+"&state="+q.Get("state"), flow)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `href="/"`, "a forged flow cookie cannot pick another site")
+}
+
+func TestLocalPath(t *testing.T) {
+	t.Parallel()
+	for _, next := range []string{"/", "/things/42?tab=a#top", "/a b/ü"} {
+		assert.Equal(t, next, localPath(next))
+	}
+	for _, next := range []string{
+		"",
+		"things",
+		"https://evil.example.com",
+		"//evil.example.com",
+		`/\evil.example.com`,
+		"/\t/evil.example.com",
+		"/\n/evil.example.com",
+		"/" + strings.Repeat("a", maxNextLen),
+	} {
+		assert.Equal(t, "/", localPath(next), "%q", next)
+	}
 }
 
 func TestOIDCThroughProtect(t *testing.T) {
@@ -269,8 +316,9 @@ func TestOIDCWrongVerifier(t *testing.T) {
 	idp := newProvider(t)
 	g := oidcGuard(t, idp)
 	q, flow := start(t, g, idp)
-	head, _, _ := strings.CutLast(flow.Value, ".")
-	flow.Value = head + ".forged"
+	parts := strings.Split(flow.Value, ".")
+	parts[2] = "forged"
+	flow.Value = strings.Join(parts, ".")
 	w := callback(g, "code="+testCode+"&state="+q.Get("state"), flow)
 	assert.Equal(t, http.StatusBadGateway, w.Code)
 	assert.Contains(t, w.Body.String(), "did not take")

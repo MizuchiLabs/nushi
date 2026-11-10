@@ -192,7 +192,7 @@ doesn't trust that name, so `Require` answers 401. Set `r.Host = "localhost"`.
 | `GET /api/session`               | `{"mode":"oidc","signed_in":true,"api_token":true}`         |
 | `POST /api/session`              | password mode, body `{"password":"..."}`, sets the cookie |
 | `DELETE /api/session`            | signs out                                                 |
-| `GET /api/session/oidc`          | oidc mode, send the browser here to sign in               |
+| `GET /api/session/oidc`          | oidc mode, send the browser here, `next` is where it lands |
 | `GET /api/session/oidc/callback` | the provider sends the browser back here                  |
 
 `api_token` is only told to a signed in browser. Errors are
@@ -229,7 +229,8 @@ async function signOut() {
 ```
 
 - The OIDC sign in is a page load, not a `fetch`. The provider sends the
-  browser back to `/`.
+  browser back to `/`, or to the path in `next`, as in
+  `/api/session/oidc?next=/things/42`. Only a path on the app counts.
 - Sending the browser there on its own works for a session that ran out, but
   not right after a sign out. It would sign you straight back in, so a link is
   the safe default.

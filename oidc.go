@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -21,12 +22,14 @@ import (
 const (
 	callbackPath = sessionPath + "/oidc/callback"
 	flowTTL      = 10 * time.Minute
+	// Keeps the flow cookie under the 4 KB a browser stores.
+	maxNextLen = 1024
 )
 
 // continuePage lands the browser on the app. A redirect chain that started on
 // the provider may not carry the Strict session cookie, a navigation from our
 // own page does.
-const continuePage = `<!doctype html><meta http-equiv="refresh" content="0;url=/"><a href="/">Continue</a>`
+const continuePage = `<!doctype html><meta http-equiv="refresh" content="0;url=%[1]s"><a href="%[1]s">Continue</a>`
 
 type oidcClient struct {
 	issuer   string
@@ -82,8 +85,10 @@ func (o *oidcClient) ready(ctx context.Context) (*oidc.Provider, oauth2.Config, 
 func (g *Guard) oidcStart(w http.ResponseWriter, r *http.Request) {
 	// The provider comes back to the public URL, so the flow cookie has to sit on
 	// that host. Only once, a proxy that rewrites Host would land here forever.
+	next := localPath(r.URL.Query().Get("next"))
 	if bareHost(r.Host) != bareHost(g.oidc.public.Host) && !r.URL.Query().Has("moved") {
-		http.Redirect(w, r, g.oidc.public.String()+sessionPath+"/oidc?moved=1", http.StatusFound)
+		q := url.Values{"moved": {"1"}, "next": {next}}
+		http.Redirect(w, r, g.oidc.public.String()+sessionPath+"/oidc?"+q.Encode(), http.StatusFound)
 		return
 	}
 	_, conf, err := g.oidc.ready(r.Context())
@@ -92,7 +97,8 @@ func (g *Guard) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce, verifier := rand.Text(), rand.Text(), oauth2.GenerateVerifier()
-	http.SetCookie(w, g.flowCookie(state+"."+nonce+"."+verifier, int(flowTTL.Seconds()), g.secure(r)))
+	flow := strings.Join([]string{state, nonce, verifier, url.QueryEscape(next)}, ".")
+	http.SetCookie(w, g.flowCookie(flow, int(flowTTL.Seconds()), g.secure(r)))
 	target := conf.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	http.Redirect(w, r, target, http.StatusFound)
 }
@@ -104,7 +110,8 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, rest, _ := strings.Cut(c.Value, ".")
-	nonce, verifier, _ := strings.Cut(rest, ".")
+	nonce, rest, _ := strings.Cut(rest, ".")
+	verifier, next, _ := strings.Cut(rest, ".")
 
 	// Nothing in the query counts before the state matches, a stray link must not end a sign in either.
 	q := r.URL.Query()
@@ -146,8 +153,20 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.startSession(w, r)
+	next, _ = url.QueryUnescape(next)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(continuePage))
+	_, _ = fmt.Fprintf(w, continuePage, html.EscapeString(localPath(next)))
+}
+
+// localPath keeps next when it is a path on this site, so a sign in link cannot send the browser elsewhere.
+// Browsers read a backslash as a slash and drop tabs and newlines, so those are out too.
+func localPath(next string) string {
+	odd := func(r rune) bool { return r == '\\' || r < ' ' || r == 0x7f }
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || len(next) > maxNextLen ||
+		strings.ContainsFunc(next, odd) {
+		return "/"
+	}
+	return next
 }
 
 func (o *oidcClient) inGroup(ctx context.Context, p *oidc.Provider, tok *oauth2.Token, idt *oidc.IDToken) bool {
@@ -166,8 +185,8 @@ func (o *oidcClient) inGroup(ctx context.Context, p *oidc.Provider, tok *oauth2.
 	return slices.Contains(claims.Groups, o.group)
 }
 
-// flowCookie holds state, nonce and PKCE verifier while the browser is at
-// the provider. Lax, since it has to come back with the provider's redirect.
+// flowCookie holds state, nonce, PKCE verifier and where to land while the browser
+// is at the provider. Lax, since it has to come back with the provider's redirect.
 func (g *Guard) flowCookie(value string, maxAge int, secure bool) *http.Cookie {
 	//nolint:gosec // Secure follows the request, plain HTTP on a private network has to work
 	return &http.Cookie{
