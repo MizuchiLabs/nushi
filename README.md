@@ -95,7 +95,8 @@ environment:
 The app has to reach the issuer under the same URL the browser uses, the ID
 token names it. In Docker, put the app on Traefik's network so
 `id.example.com` resolves. Don't put forward auth in front of the app, it
-signs you in itself.
+signs you in itself. Authelia, Authentik and the like are OIDC providers too,
+so point nushi at them instead.
 
 A sign in that starts on another host, such as `127.0.0.1` with a public URL on
 `localhost`, moves to the public URL first and stays there.
@@ -108,9 +109,9 @@ Everyone your provider lets through gets the whole app, nushi has no users to
 tell apart. So limit the client at the provider. Most can do that, for example
 bindings in Authentik or the project's role check in Zitadel.
 
-Where that isn't simple, as in Keycloak or on a public provider, set
-`<APP>_OIDC_GROUP` too. nushi then asks for the `groups` scope and only lets in
-that group, from the ID token's `groups` claim or userinfo.
+Where that isn't simple, as in Keycloak, set `<APP>_OIDC_GROUP` too. nushi
+then asks for the `groups` scope and only lets in that group, from the ID
+token's `groups` claim or userinfo.
 
 - PocketID, Authentik, Authelia and Dex send the claim as is.
 - Keycloak needs a `groups` client scope with a group membership mapper, it
@@ -118,6 +119,9 @@ that group, from the ID token's `groups` claim or userinfo.
 - Kanidm needs `groups` in the scope map, and takes the group as UUID or SPN.
 - Zitadel has roles, not groups. It only sends the claim from an Action you
   write.
+- Public providers such as Google have no groups and refuse the scope, so the
+  group can't help there. Anyone with an account gets in unless the provider
+  limits the client, as Google does for an internal app or one in testing.
 
 ## Use
 
@@ -256,3 +260,4 @@ async function signOut() {
 - Sign out only clears the cookie in this browser. The session is not stored
   anywhere, so a stolen cookie works until it runs out, or until you change the
   password or the client secret.
+- No forward auth mode. A proxy that is set up wrong would open the app.
