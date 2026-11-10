@@ -152,6 +152,7 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Debug("signed in", "client", g.clientAddr(r), "sub", idt.Subject)
 	g.startSession(w, r)
 	next, _ = url.QueryUnescape(next)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

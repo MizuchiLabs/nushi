@@ -179,8 +179,8 @@ still use the env var names.
 guard, err := nushi.New("myapp", nushi.Config{Password: password})
 ```
 
-Failed sign ins and provider errors go to `slog`'s default logger. The browser
-only gets a short reason.
+Failed sign ins and provider errors go to `slog`'s default logger, sign ins
+that work only at debug. The browser only gets a short reason.
 
 In your tests, `httptest.NewRequest` uses the host `example.com`. Mode `none`
 doesn't trust that name, so `Require` answers 401. Set `r.Host = "localhost"`.

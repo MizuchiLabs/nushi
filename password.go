@@ -46,6 +46,7 @@ func (g *Guard) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.limiter.refund(from)
+	slog.Debug("signed in", "client", from)
 	g.startSession(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
