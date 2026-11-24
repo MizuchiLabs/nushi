@@ -27,7 +27,8 @@ const (
 	testCode     = "good-code"
 )
 
-// fakeProvider answers discovery, keys and the token exchange like PocketID would.
+// fakeProvider answers discovery, keys and the token exchange like PocketID
+// would.
 type fakeProvider struct {
 	srv  *httptest.Server
 	key  *ecdsa.PrivateKey
@@ -128,7 +129,8 @@ func startRequest() *http.Request {
 	return r
 }
 
-// start begins a sign in and hands back the provider's query and the flow cookie.
+// start begins a sign in and hands back the provider's query and the flow
+// cookie.
 func start(t *testing.T, g *Guard, idp *fakeProvider) (url.Values, *http.Cookie) {
 	t.Helper()
 	return startWith(t, g, idp, startRequest())

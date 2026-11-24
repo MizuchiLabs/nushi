@@ -17,6 +17,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -33,7 +34,7 @@ const (
 	sessionPath = "/api/session"
 
 	passwordTTL = 30 * 24 * time.Hour
-	// Short, so a removal at the provider takes effect within a day. Signing in again is a quick redirect.
+	// Short, so a removal at the provider takes effect within a day.
 	oidcTTL = 24 * time.Hour
 
 	minPasswordLen = 12
@@ -43,7 +44,8 @@ const (
 	minSecretLen = 16
 )
 
-// keyRounds makes a leaked cookie expensive to turn into the password. Tests lower it.
+// keyRounds makes a leaked cookie expensive to turn into the password. Tests
+// lower it.
 var keyRounds = 600_000
 
 // Mode is how the owner signs in.
@@ -75,17 +77,20 @@ type Config struct {
 	// OIDCGroup is the group from the groups claim that may sign in. Empty
 	// skips the check, everyone the provider lets through gets in.
 	OIDCGroup string
-	// PublicURL is the site root where browsers reach the app, the provider redirects back to it.
+	// PublicURL is the site root where browsers reach the app. The provider
+	// redirects back to it.
 	PublicURL string
 
 	// TrustedProxies are the IPs and ranges whose X-Forwarded-For and
 	// X-Forwarded-Proto count. Empty trusts any proxy on a private network.
 	TrustedProxies []string
-	// TrustedHosts are extra names and IP ranges the app answers to in mode none.
+	// TrustedHosts are extra names and IP ranges the app answers to in mode
+	// none.
 	TrustedHosts []string
 }
 
-// Guard checks requests and, through [Guard.Protect], serves the sign in routes.
+// Guard checks requests and, through [Guard.Protect], serves the sign in
+// routes.
 type Guard struct {
 	name     string
 	mode     Mode
@@ -140,7 +145,11 @@ func FromEnv(name string) (*Guard, error) {
 		if err != nil {
 			fileErr = errors.Join(fileErr, fmt.Errorf("reading %s_FILE: %w", prefix+key, err))
 		}
-		return strings.TrimRight(string(b), "\r\n")
+		value := strings.TrimSpace(string(b))
+		if err == nil && value == "" {
+			slog.Warn("the file is empty", "var", prefix+key+"_FILE", "path", path)
+		}
+		return value
 	}
 	c := Config{
 		Mode:             Mode(get("AUTH")),
@@ -174,6 +183,14 @@ func New(name string, c Config) (*Guard, error) {
 		return nil, err
 	}
 	g.mode = mode
+	if keys := g.ignored(c); len(keys) > 0 {
+		msg := "these settings do nothing in mode " + string(mode)
+		if mode == ModeNone {
+			msg = fmt.Sprintf("there is no sign in, so these settings do nothing, set %s or %s",
+				g.env("PASSWORD"), g.env("OIDC_ISSUER"))
+		}
+		slog.Warn(msg, "settings", keys)
+	}
 	for _, t := range c.APITokens {
 		if t = strings.TrimSpace(t); t == "" {
 			continue
@@ -226,7 +243,7 @@ func New(name string, c Config) (*Guard, error) {
 	case ModePassword:
 		g.ttl = passwordTTL
 		g.password = sha256.Sum256([]byte(c.Password))
-		// Slow on purpose. A new password gives a new key, which ends every session.
+		// A new password gives a new key, which ends every session.
 		g.key, err = pbkdf2.Key(sha256.New, c.Password, []byte(name+" session cookie"), keyRounds, sha256.Size)
 		if err != nil {
 			return nil, fmt.Errorf("deriving the session key: %w", err)
@@ -309,13 +326,40 @@ func (g *Guard) pickMode(c Config) (Mode, error) {
 	return mode, nil
 }
 
+// ignored names the env vars of the settings g's mode doesn't use.
+func (g *Guard) ignored(c Config) []string {
+	none, oidc := g.mode == ModeNone, g.mode == ModeOIDC
+	filled := func(l []string) bool {
+		return slices.ContainsFunc(l, func(s string) bool { return strings.TrimSpace(s) != "" })
+	}
+	var keys []string
+	for key, unused := range map[string]bool{
+		"PASSWORD":           g.mode != ModePassword && c.Password != "",
+		"API_TOKEN":          none && filled(c.APITokens),
+		"TRUSTED_PROXIES":    none && filled(c.TrustedProxies),
+		"TRUSTED_HOSTS":      !none && filled(c.TrustedHosts),
+		"OIDC_ISSUER":        !oidc && c.OIDCIssuer != "",
+		"OIDC_CLIENT_ID":     !oidc && c.OIDCClientID != "",
+		"OIDC_CLIENT_SECRET": !oidc && c.OIDCClientSecret != "",
+		"OIDC_GROUP":         !oidc && c.OIDCGroup != "",
+		"PUBLIC_URL":         !oidc && c.PublicURL != "",
+	} {
+		if unused {
+			keys = append(keys, g.env(key))
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 // Mode reports how the owner signs in.
 func (g *Guard) Mode() Mode {
 	return g.mode
 }
 
 // Allowed reports whether r comes from the owner or a script with the API
-// token. In mode none that is anyone on the local network under a trusted host name.
+// token. In mode none that is anyone on the local network under a trusted
+// host name.
 func (g *Guard) Allowed(r *http.Request) bool {
 	if g.mode == ModeNone {
 		return g.refuseOpen(r) == ""
@@ -364,7 +408,8 @@ func (g *Guard) Protect(next http.Handler) http.Handler {
 			}
 		}
 		w.Header().Set("X-Frame-Options", "DENY")
-		// A WebSocket handshake is a GET, which the check skips. SameSite doesn't help, a subdomain is the same site.
+		// A WebSocket handshake is a GET, which the check skips. SameSite
+		// doesn't help, a subdomain is the same site.
 		if r.Header.Get("Upgrade") != "" {
 			asWrite := r.WithContext(r.Context())
 			asWrite.Method = http.MethodPost
@@ -395,7 +440,7 @@ func (g *Guard) Listen(ctx context.Context, addr string) (net.Listener, error) {
 
 // refuseOpen says why mode none turns r away, or "" when r may in.
 func (g *Guard) refuseOpen(r *http.Request) string {
-	// The client writes the headers checked below. The address it came in on it cannot fake.
+	// The client writes the headers but can't fake the address it came in on.
 	if tcp, ok := r.Context().Value(http.LocalAddrContextKey).(*net.TCPAddr); ok && !tcp.IP.IsLoopback() {
 		return fmt.Sprintf(
 			"the app has no sign in, so it only answers on loopback, set %s or %s",
@@ -436,14 +481,13 @@ func (g *Guard) signOut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// startSession hands the browser a session cookie for the mode's ttl.
 func (g *Guard) startSession(w http.ResponseWriter, r *http.Request) {
 	value := g.sign(time.Now().Add(g.ttl).Unix())
 	http.SetCookie(w, g.sessionCookie(value, int(g.ttl.Seconds()), g.secure(r)))
 }
 
 func (g *Guard) sessionCookie(value string, maxAge int, secure bool) *http.Cookie {
-	//nolint:gosec // Secure follows the request, plain HTTP on a private network has to work
+	//nolint:gosec // plain HTTP on a private network has to work
 	return &http.Cookie{
 		Name:     g.cookieName(),
 		Value:    value,
@@ -498,7 +542,6 @@ func (g *Guard) trusted(host string) bool {
 	return g.hostNames[host]
 }
 
-// bareHost cuts the port and brackets off a Host value and lowers it.
 func bareHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -506,7 +549,6 @@ func bareHost(host string) string {
 	return strings.ToLower(strings.Trim(host, "[]"))
 }
 
-// env names the app's env var for key, such as MYAPP_PASSWORD.
 func (g *Guard) env(key string) string {
 	return strings.ToUpper(g.name) + "_" + key
 }

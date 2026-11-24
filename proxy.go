@@ -8,18 +8,17 @@ import (
 	"strings"
 )
 
-// localRanges are this machine and the private networks around it, Tailscale included.
 var localRanges = []netip.Prefix{
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("::1/128"),
 	netip.MustParsePrefix("10.0.0.0/8"),
 	netip.MustParsePrefix("172.16.0.0/12"),
 	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("100.64.0.0/10"), // Tailscale
 	netip.MustParsePrefix("fc00::/7"),
 }
 
-// clientAddr is who sent r. Behind a trusted proxy it is the last hop the proxies do not vouch for.
+// clientAddr is the last hop the trusted proxies don't vouch for.
 func (g *Guard) clientAddr(r *http.Request) netip.Addr {
 	addr := peer(r)
 	if !g.viaProxy(r) {
@@ -37,7 +36,8 @@ func (g *Guard) clientAddr(r *http.Request) netip.Addr {
 	return addr
 }
 
-// viaProxy reports whether r's direct peer is a trusted proxy. It warns once about a proxy that is not pinned.
+// viaProxy reports whether r's direct peer is a trusted proxy. It warns once
+// about a proxy that is not pinned.
 func (g *Guard) viaProxy(r *http.Request) bool {
 	if g.mode == ModeNone {
 		return false
@@ -55,19 +55,21 @@ func (g *Guard) viaProxy(r *http.Request) bool {
 	return trusted
 }
 
-// secure reports whether the browser reached us over HTTPS. A trusted proxy that ends TLS says so in a header.
+// secure reports whether the browser reached us over HTTPS.
 func (g *Guard) secure(r *http.Request) bool {
 	return r.TLS != nil || (g.viaProxy(r) && r.Header.Get("X-Forwarded-Proto") == "https")
 }
 
-// outside reports whether a proxy says r comes from beyond the local network. It ignores
-// TrustedProxies on purpose, pinning a proxy must never open mode none.
+// outside reports whether a proxy says r comes from beyond the local network.
+// It ignores TrustedProxies on purpose, pinning a proxy must never open mode
+// none.
 func outside(r *http.Request) bool {
 	return r.Header.Get("Forwarded") != "" ||
 		slices.ContainsFunc(forwardedFor(r), func(a netip.Addr) bool { return !local(a) })
 }
 
-// forwardedFor lists the X-Forwarded-For hops, oldest first. A hop that is no address is the zero Addr.
+// forwardedFor lists the X-Forwarded-For hops, oldest first. A hop that is no
+// address is the zero Addr.
 func forwardedFor(r *http.Request) []netip.Addr {
 	var hops []netip.Addr
 	for _, line := range r.Header.Values("X-Forwarded-For") {

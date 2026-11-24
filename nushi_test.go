@@ -54,7 +54,8 @@ func signInFrom(addr, password string) *http.Request {
 	return r
 }
 
-// signInVia sends the sign in through a proxy on a docker network, the way Traefik would.
+// signInVia sends the sign in through a proxy on a docker network, the way
+// Traefik would.
 func signInVia(client, password string) *http.Request {
 	r := signInFrom(testProxy, password)
 	r.Header.Set("X-Forwarded-For", client)
@@ -148,6 +149,43 @@ func TestPickMode(t *testing.T) {
 	}
 }
 
+func TestIgnored(t *testing.T) {
+	t.Parallel()
+	oidc := Config{
+		OIDCIssuer: "https://id.example.com", OIDCClientID: "id", OIDCClientSecret: "0123456789abcdef",
+		OIDCGroup: "admins", PublicURL: "https://app.example.com", APITokens: []string{testToken},
+	}
+	tests := []struct {
+		name string
+		c    Config
+		want []string
+	}{
+		{"nothing", Config{}, nil},
+		{"oidc uses all its settings", oidc, nil},
+		{
+			"password with tokens and proxies",
+			Config{Password: testPassword, APITokens: []string{testToken}, TrustedProxies: []string{"10.0.0.1"}},
+			nil,
+		},
+		{"empty entries", Config{APITokens: []string{""}, TrustedProxies: []string{" "}}, nil},
+		{"token without a sign in", Config{APITokens: []string{testToken}}, []string{"APP_API_TOKEN"}},
+		{"client id without an issuer", Config{OIDCClientID: "id"}, []string{"APP_OIDC_CLIENT_ID"}},
+		{"proxies without a sign in", Config{TrustedProxies: []string{"10.0.0.1"}}, []string{"APP_TRUSTED_PROXIES"}},
+		{"password with mode none", Config{Mode: ModeNone, Password: testPassword}, []string{"APP_PASSWORD"}},
+		{
+			"hosts and public url with a password",
+			Config{Password: testPassword, TrustedHosts: []string{"app.lan"}, PublicURL: "https://app.example.com"},
+			[]string{"APP_PUBLIC_URL", "APP_TRUSTED_HOSTS"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, newGuard(t, tt.c).ignored(tt.c))
+		})
+	}
+}
+
 func TestAppName(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"", "my-app", "MyApp", "a b"} {
@@ -191,7 +229,7 @@ func TestFromEnvSecretFiles(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 		return path
 	}
-	t.Setenv("APP_PASSWORD_FILE", write("password", testPassword+"\n"))
+	t.Setenv("APP_PASSWORD_FILE", write("password", testPassword+" \n"))
 	t.Setenv("APP_API_TOKEN_FILE", write("token", testToken+","+testToken2+"\r\n"))
 	g, err := FromEnv("app")
 	require.NoError(t, err)
@@ -200,7 +238,7 @@ func TestFromEnvSecretFiles(t *testing.T) {
 		t,
 		http.StatusNoContent,
 		do(g.mux, signInRequest(testPassword)).Code,
-		"the newline is not the password",
+		"the trailing whitespace is not the password",
 	)
 	assert.True(t, g.bearer("Bearer "+testToken))
 	assert.True(t, g.bearer("Bearer "+testToken2))

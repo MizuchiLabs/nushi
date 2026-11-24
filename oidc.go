@@ -26,9 +26,8 @@ const (
 	maxNextLen = 1024
 )
 
-// continuePage lands the browser on the app. A redirect chain that started on
-// the provider may not carry the Strict session cookie, a navigation from our
-// own page does.
+// A redirect chain that started at the provider may not carry the Strict
+// session cookie, a navigation from our own page does.
 const continuePage = `<!doctype html><meta http-equiv="refresh" content="0;url=%[1]s"><a href="%[1]s">Continue</a>`
 
 type oidcClient struct {
@@ -42,13 +41,14 @@ type oidcClient struct {
 
 func newOIDC(c Config) *oidcClient {
 	scopes := []string{oidc.ScopeOpenID, oidc.ScopeProfile}
-	// Only when needed, Keycloak refuses a sign in that asks for a scope it doesn't know.
+	// Keycloak refuses a sign in that asks for a scope it doesn't know.
 	if c.OIDCGroup != "" {
 		scopes = append(scopes, "groups")
 	} else {
 		slog.Debug("no oidc group set, the provider decides who gets in")
 	}
-	public, _ := url.Parse(strings.TrimSuffix(c.PublicURL, "/")) // pickMode checked it
+	// pickMode checked it.
+	public, _ := url.Parse(strings.TrimSuffix(c.PublicURL, "/"))
 	return &oidcClient{
 		issuer: c.OIDCIssuer,
 		public: public,
@@ -83,8 +83,9 @@ func (o *oidcClient) ready(ctx context.Context) (*oidc.Provider, oauth2.Config, 
 }
 
 func (g *Guard) oidcStart(w http.ResponseWriter, r *http.Request) {
-	// The provider comes back to the public URL, so the flow cookie has to sit on
-	// that host. Only once, a proxy that rewrites Host would land here forever.
+	// The provider comes back to the public URL, so the flow cookie has to
+	// sit on that host. Only once, a proxy that rewrites Host would land here
+	// forever.
 	next := localPath(r.URL.Query().Get("next"))
 	if bareHost(r.Host) != bareHost(g.oidc.public.Host) && !r.URL.Query().Has("moved") {
 		q := url.Values{"moved": {"1"}, "next": {next}}
@@ -113,7 +114,8 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	nonce, rest, _ := strings.Cut(rest, ".")
 	verifier, next, _ := strings.Cut(rest, ".")
 
-	// Nothing in the query counts before the state matches, a stray link must not end a sign in either.
+	// Nothing in the query counts before the state matches, so a stray link
+	// can't end a sign in either.
 	q := r.URL.Query()
 	if state == "" || subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
 		fail(w, http.StatusBadRequest, "the sign in does not match the one this browser started", nil)
@@ -159,8 +161,9 @@ func (g *Guard) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, continuePage, html.EscapeString(localPath(next)))
 }
 
-// localPath keeps next when it is a path on this site, so a sign in link cannot send the browser elsewhere.
-// Browsers read a backslash as a slash and drop tabs and newlines, so those are out too.
+// localPath keeps next when it is a path on this site, so a sign in link
+// cannot send the browser elsewhere. Browsers read a backslash as a slash and
+// drop tabs and newlines, so those are out too.
 func localPath(next string) string {
 	odd := func(r rune) bool { return r == '\\' || r < ' ' || r == 0x7f }
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || len(next) > maxNextLen ||
@@ -186,10 +189,10 @@ func (o *oidcClient) inGroup(ctx context.Context, p *oidc.Provider, tok *oauth2.
 	return slices.Contains(claims.Groups, o.group)
 }
 
-// flowCookie holds state, nonce, PKCE verifier and where to land while the browser
-// is at the provider. Lax, since it has to come back with the provider's redirect.
+// flowCookie holds state, nonce, PKCE verifier and where to land while the
+// browser is at the provider.
 func (g *Guard) flowCookie(value string, maxAge int, secure bool) *http.Cookie {
-	//nolint:gosec // Secure follows the request, plain HTTP on a private network has to work
+	//nolint:gosec // plain HTTP on a private network has to work
 	return &http.Cookie{
 		Name:     g.flowName(),
 		Value:    value,
@@ -197,6 +200,7 @@ func (g *Guard) flowCookie(value string, maxAge int, secure bool) *http.Cookie {
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure,
+		// The provider's redirect has to carry it.
 		SameSite: http.SameSiteLaxMode,
 	}
 }

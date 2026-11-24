@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	// A guesser cannot lock the owner out with loginAttempts per client. A crowd gets no more than loginCap,
-	// and the local network has a cap of its own, so a crowd outside cannot lock the owner out at home.
+	// One guesser only uses up its own loginAttempts. A crowd gets loginCap,
+	// and the local network has a cap of its own, so a crowd outside cannot
+	// lock the owner out at home.
 	loginAttempts = 5
 	loginCap      = 30
 	loginWindow   = time.Minute
@@ -51,7 +52,8 @@ func (g *Guard) signIn(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// attempt takes a try from the client's budget and its pool, and reports whether both had one.
+// attempt takes a try from the client's budget and its pool, and reports
+// whether both had one.
 func (l *limiter) attempt(from netip.Addr) bool {
 	key, pool := budgetKey(from), local(from)
 	l.mu.Lock()
@@ -61,7 +63,7 @@ func (l *limiter) attempt(from netip.Addr) bool {
 		clear(l.total)
 		clear(l.tries)
 	}
-	// A try that is turned away costs nothing, or one client could spend the shared budget.
+	// A refused try costs nothing, or one client could spend the shared budget.
 	if l.total[pool] >= loginCap || l.tries[key] >= loginAttempts {
 		return false
 	}
@@ -70,7 +72,8 @@ func (l *limiter) attempt(from netip.Addr) bool {
 	return true
 }
 
-// refund gives the try back after the right password, so a sign in on every device fits.
+// refund gives the try back after the right password, so a sign in on every
+// device fits.
 func (l *limiter) refund(from netip.Addr) {
 	key, pool := budgetKey(from), local(from)
 	l.mu.Lock()
@@ -83,7 +86,8 @@ func (l *limiter) refund(from netip.Addr) {
 	}
 }
 
-// budgetKey groups a client's addresses, an IPv6 host usually holds a whole /64. Odd addresses share one.
+// budgetKey groups a client's addresses, since an IPv6 host usually holds a
+// whole /64. Invalid addresses share one key.
 func budgetKey(addr netip.Addr) netip.Prefix {
 	bits := 32
 	if addr.Is6() {

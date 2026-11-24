@@ -9,15 +9,16 @@ go get github.com/mizuchilabs/nushi
 
 ## Modes
 
-| Mode       | Who gets in                                | Answers on    | Session  |
-| ---------- | ------------------------------------------ | ------------- | -------- |
-| `none`     | this machine, local host names only        | loopback only |          |
-| `password` | whoever knows the password                 | anywhere      | 30 days  |
-| `oidc`     | whoever your OIDC provider lets through    | anywhere      | 24 hours |
+| Mode       | Who gets in                             | Answers on    | Session  |
+| ---------- | --------------------------------------- | ------------- | -------- |
+| `none`     | this machine, local host names only     | loopback only |          |
+| `password` | whoever knows the password              | anywhere      | 30 days  |
+| `oidc`     | whoever your OIDC provider lets through | anywhere      | 24 hours |
 
 The mode comes from `<APP>_AUTH`. Left empty, it follows what is set: a
 password means `password`, an issuer means `oidc`, neither means `none`.
-A mode that misses a setting fails at startup.
+A mode that misses a setting fails at startup. Settings the mode doesn't use, such
+as an API token without a sign in, and empty `_FILE` secrets only log a warning.
 
 Mode `none` is for local dev, or a proxy on the same machine, which can bring
 in the local network. It can't work in a container behind Traefik. Traefik
@@ -34,18 +35,18 @@ again, which is instant while your session there lasts.
 
 The env vars carry the app's prefix, `MYAPP_` for an app called `myapp`.
 
-| Var                        | Mode       |                                                                         |
-| -------------------------- | ---------- | ----------------------------------------------------------------------- |
-| `<APP>_AUTH`               | all        | `none`, `password` or `oidc`, optional                                  |
-| `<APP>_PASSWORD`           | `password` | at least 12 characters                                                  |
-| `<APP>_API_TOKEN`          | not `none` | at least 32 characters each, comma separated to roll to a new one       |
-| `<APP>_OIDC_ISSUER`        | `oidc`     | `https://id.example.com`                                                |
-| `<APP>_OIDC_CLIENT_ID`     | `oidc`     |                                                                         |
-| `<APP>_OIDC_CLIENT_SECRET` | `oidc`     | at least 16 characters, it also keys the cookie                         |
-| `<APP>_OIDC_GROUP`         | `oidc`     | optional, only this group gets in, see [Who gets in](#who-gets-in)      |
-| `<APP>_PUBLIC_URL`         | `oidc`     | the site root where browsers reach the app, no path                     |
-| `<APP>_TRUSTED_PROXIES`    | not `none` | proxy IPs or ranges, see [Behind a proxy](#behind-a-proxy)              |
-| `<APP>_TRUSTED_HOSTS`      | `none`     | extra host names or IP ranges the app answers to, no ports              |
+| Var                        | Mode       |                                                                    |
+| -------------------------- | ---------- | ------------------------------------------------------------------ |
+| `<APP>_AUTH`               | all        | `none`, `password` or `oidc`, optional                             |
+| `<APP>_PASSWORD`           | `password` | at least 12 characters                                             |
+| `<APP>_API_TOKEN`          | not `none` | at least 32 characters each, comma separated to roll to a new one  |
+| `<APP>_OIDC_ISSUER`        | `oidc`     | `https://id.example.com`                                           |
+| `<APP>_OIDC_CLIENT_ID`     | `oidc`     |                                                                    |
+| `<APP>_OIDC_CLIENT_SECRET` | `oidc`     | at least 16 characters, it also keys the cookie                    |
+| `<APP>_OIDC_GROUP`         | `oidc`     | optional, only this group gets in, see [Who gets in](#who-gets-in) |
+| `<APP>_PUBLIC_URL`         | `oidc`     | the site root where browsers reach the app, no path                |
+| `<APP>_TRUSTED_PROXIES`    | not `none` | proxy IPs or ranges, see [Behind a proxy](#behind-a-proxy)         |
+| `<APP>_TRUSTED_HOSTS`      | `none`     | extra host names or IP ranges the app answers to, no ports         |
 
 The password, the API token and the client secret can sit in a file instead,
 such as a docker secret. Add `_FILE` to the var and give it the path, as in
@@ -191,13 +192,13 @@ doesn't trust that name, so `Require` answers 401. Set `r.Host = "localhost"`.
 
 ## Routes
 
-| Route                            | What it does                                              |
-| -------------------------------- | --------------------------------------------------------- |
-| `GET /api/session`               | `{"mode":"oidc","signed_in":true,"api_token":true}`         |
-| `POST /api/session`              | password mode, body `{"password":"..."}`, sets the cookie |
-| `DELETE /api/session`            | signs out                                                 |
+| Route                            | What it does                                               |
+| -------------------------------- | ---------------------------------------------------------- |
+| `GET /api/session`               | `{"mode":"oidc","signed_in":true,"api_token":true}`        |
+| `POST /api/session`              | password mode, body `{"password":"..."}`, sets the cookie  |
+| `DELETE /api/session`            | signs out                                                  |
 | `GET /api/session/oidc`          | oidc mode, send the browser here, `next` is where it lands |
-| `GET /api/session/oidc/callback` | the provider sends the browser back here                  |
+| `GET /api/session/oidc/callback` | the provider sends the browser back here                   |
 
 `api_token` is only told to a signed in browser. Errors are
 `application/problem+json` with a `detail`.
